@@ -133,6 +133,61 @@ def _load_job_and_profile(job_id: int):
     return cfg, job, profile
 
 
+# In-memory status per job_id for the background CV-generation task below.
+# Not persisted - if the backend restarts mid-generation, a poll for that
+# job_id will 404 and the frontend surfaces that as an error, which is an
+# acceptable edge case for a manually-triggered, one-off action like this
+# (unlike /run, which is a longer scan worth being more careful about).
+_cv_jobs: dict[int, dict[str, str]] = {}
+
+
+def _run_cv_generation(job_id: int) -> None:
+    """Runs entirely in a BackgroundTask - must never let an exception
+    escape (Starlette would just log it as an unhandled "Exception in ASGI
+    application" and the frontend's poll would spin forever), so every
+    failure path writes a user-facing message into _cv_jobs instead of
+    raising.
+    """
+    try:
+        cfg, job, profile = _load_job_and_profile(job_id)
+    except HTTPException as exc:
+        _cv_jobs[job_id] = {"status": "error", "detail": str(exc.detail)}
+        return
+
+    if not profile.resume.name:
+        _cv_jobs[job_id] = {
+            "status": "error",
+            "detail": (
+                f"Profile '{profile.name}' has no resume data configured. "
+                "Add a `resume:` section to its profiles/<name>.yaml first."
+            ),
+        }
+        return
+
+    client = OllamaClient(cfg)
+    try:
+        tailored = build_tailored_cv(client, profile.resume, job)
+        pdf_bytes = render_ats_pdf(profile.resume, tailored)
+        safe_name = (profile.resume.name or profile.name).replace(" ", "_")
+        safe_company = (job.company or "role").replace(" ", "_").replace("/", "-")
+        filename = f"{safe_name}_CV_{safe_company}.pdf"
+        send_document_to_profile(
+            profile,
+            pdf_bytes,
+            filename,
+            caption=f"Tailored CV — {job.title} @ {job.company}",
+        )
+    except (ResumeIncomplete, TelegramSendError) as exc:
+        _cv_jobs[job_id] = {"status": "error", "detail": str(exc)}
+        return
+    except Exception as exc:  # noqa: BLE001 - last-resort net, see docstring
+        print(f"[send-cv] job {job_id} failed unexpectedly: {exc}")
+        _cv_jobs[job_id] = {"status": "error", "detail": f"Unexpected error: {exc}"}
+        return
+
+    _cv_jobs[job_id] = {"status": "done", "detail": "sent"}
+
+
 @app.post("/jobs/{job_id}/send-telegram")
 def send_job_telegram(job_id: int) -> dict[str, str]:
     """Sends one job offer to Telegram — the only path used to deliver an
@@ -150,50 +205,40 @@ def send_job_telegram(job_id: int) -> dict[str, str]:
 
 
 @app.post("/jobs/{job_id}/send-cv")
-def send_cv_telegram(job_id: int) -> dict[str, str]:
-    """Generates a CV tailored to this specific job posting (via the same
-    Ollama model used for scoring - see cv.py) and sends it as a PDF to the
-    owning profile's Telegram chat. The tailoring never invents resume
-    facts: company/title/dates/degrees always come from the profile's
-    `resume:` section, the LLM only rewrites the summary, skill order, and
-    bullet phrasing (validated against the original data - see
-    cv.build_tailored_cv).
+def send_cv_telegram(job_id: int, background_tasks: BackgroundTasks) -> dict[str, str]:
+    """Kicks off CV tailoring + PDF render + Telegram send in the
+    background and returns immediately - see GET /jobs/{id}/cv-status for
+    the result.
 
-    Synchronous like /send-telegram (no background task): a single Ollama
-    completion, not a full pipeline run, so the wait is comparable to one
-    job-scoring call, not a multi-minute scan.
+    This used to run synchronously (a single Ollama completion, so it
+    seemed comparable to one scoring call), but a full tailoring pass -
+    Ollama generation + PDF render + a Telegram upload - can take minutes
+    on a slow/remote Ollama, long enough that the frontend's HTTP client
+    (or an intermediary) gives up and reports "could not reach the
+    backend" even though the backend is still working. Backgrounding it
+    avoids depending on any client/proxy timeout being longer than however
+    long Ollama happens to take.
     """
-    cfg, job, profile = _load_job_and_profile(job_id)
+    # Fails fast (404) for a bad job id before ever touching the background
+    # task, so the frontend gets an immediate, specific error instead of
+    # only discovering the problem on the first status poll.
+    _load_job_and_profile(job_id)
 
-    if not profile.resume.name:
-        raise HTTPException(
-            400,
-            f"Profile '{profile.name}' has no resume data configured. "
-            "Add a `resume:` section to its profiles/<name>.yaml first.",
-        )
+    _cv_jobs[job_id] = {"status": "running", "detail": ""}
+    background_tasks.add_task(_run_cv_generation, job_id)
+    return {"status": "started"}
 
-    client = OllamaClient(cfg)
-    try:
-        tailored = build_tailored_cv(client, profile.resume, job)
-    except ResumeIncomplete as exc:
-        raise HTTPException(400, str(exc)) from exc
 
-    pdf_bytes = render_ats_pdf(profile.resume, tailored)
-    safe_name = (profile.resume.name or profile.name).replace(" ", "_")
-    safe_company = (job.company or "role").replace(" ", "_").replace("/", "-")
-    filename = f"{safe_name}_CV_{safe_company}.pdf"
-
-    try:
-        send_document_to_profile(
-            profile,
-            pdf_bytes,
-            filename,
-            caption=f"Tailored CV — {job.title} @ {job.company}",
-        )
-    except TelegramSendError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    return {"status": "sent", "profile": profile.name}
+@app.get("/jobs/{job_id}/cv-status")
+def cv_status(job_id: int) -> dict[str, str]:
+    """Polled by the frontend after POST /jobs/{id}/send-cv. `status` is
+    one of "running", "done", "error" - `detail` carries the user-facing
+    reason when status is "error", same messages the old synchronous
+    endpoint used to return as HTTP error bodies."""
+    state = _cv_jobs.get(job_id)
+    if state is None:
+        raise HTTPException(404, "No CV generation in progress or completed for this job")
+    return state
 
 
 @app.post("/init-db")

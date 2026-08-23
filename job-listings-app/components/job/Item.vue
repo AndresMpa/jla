@@ -38,11 +38,39 @@ async function sendToTelegram() {
 // "Send tailored CV": generates an ATS-formatted resume tailored to THIS
 // job posting (LLM rewrites summary/skill order/bullet phrasing only — it
 // never invents employers, dates, or degrees, see cv.py) and delivers it
-// as a PDF to the profile's Telegram chat. Can take a while (one LLM
-// completion), so this has its own independent loading state from the
-// "Send to Telegram" button above.
+// as a PDF to the profile's Telegram chat.
+//
+// The backend only kicks the work off and returns immediately — a full
+// tailoring pass (Ollama generation + PDF render + Telegram upload) can
+// take minutes, too long to hold open a single HTTP request reliably. So
+// this polls GET .../cv-status every few seconds until the backend
+// reports "done" or "error", the same pattern useJobsFeed uses for
+// POST /run + GET /run/status.
 const cvState = ref<"idle" | "sending" | "sent" | "error">("idle");
 const cvErrorMessage = ref("");
+
+function pollCvStatus(): Promise<{ ok: boolean; message?: string }> {
+  return new Promise((resolve) => {
+    const interval = setInterval(async () => {
+      try {
+        const { status, detail } = await $fetch<{ status: string; detail: string }>(
+          `/api/jobs/${props.job.id}/cv-status`,
+        );
+        if (status === "done") {
+          clearInterval(interval);
+          resolve({ ok: true });
+        } else if (status === "error") {
+          clearInterval(interval);
+          resolve({ ok: false, message: detail });
+        }
+        // status === "running" - keep polling
+      } catch {
+        // Transient network hiccup while polling - keep trying rather than
+        // abandoning the poll and leaving the button stuck "sending".
+      }
+    }, 3000);
+  });
+}
 
 async function sendTailoredCv() {
   if (cvState.value === "sending") return;
@@ -50,12 +78,17 @@ async function sendTailoredCv() {
   cvErrorMessage.value = "";
   try {
     await $fetch(`/api/jobs/${props.job.id}/send-cv`, { method: "POST" });
-    cvState.value = "sent";
+    const result = await pollCvStatus();
+    if (result.ok) {
+      cvState.value = "sent";
+    } else {
+      cvErrorMessage.value = result.message ?? "Could not generate or send the tailored CV";
+      cvState.value = "error";
+    }
   } catch (err) {
     const error = err as ApiFetchError;
     cvErrorMessage.value =
-      error?.data?.statusMessage ??
-      "Could not generate or send the tailored CV";
+      error?.data?.statusMessage ?? "Could not generate or send the tailored CV";
     cvState.value = "error";
   }
 }
