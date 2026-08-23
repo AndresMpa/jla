@@ -130,6 +130,36 @@ def send_job_to_profile(profile: ProfileConfig, job: _JobLike) -> None:
         raise TelegramSendError(f"Telegram API request failed: {exc}") from exc
 
 
+def send_document_to_profile(
+    profile: ProfileConfig, file_bytes: bytes, filename: str, caption: str
+) -> None:
+    """Sends an arbitrary file (e.g. a tailored CV PDF, see cv.py) to
+    `profile`'s Telegram chat. Same auth/config checks as
+    send_job_to_profile, kept separate since a document upload needs
+    `files=` instead of `data=` on the Telegram API call."""
+    if not profile.telegram.enabled:
+        raise TelegramSendError(f"Telegram isn't enabled for profile '{profile.name}'")
+    if not profile.telegram.chat_id:
+        raise TelegramSendError(
+            f"Profile '{profile.name}' has no Telegram chat_id configured"
+        )
+    token = _bot_token()
+    if not token:
+        raise TelegramSendError("TELEGRAM_BOT_TOKEN is not set")
+
+    base = f"{TELEGRAM_API_BASE}/bot{token}"
+    try:
+        resp = requests.post(
+            f"{base}/sendDocument",
+            data={"chat_id": profile.telegram.chat_id, "caption": caption[:1024]},
+            files={"document": (filename, file_bytes, "application/pdf")},
+            timeout=60,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise TelegramSendError(f"Telegram API request failed: {exc}") from exc
+
+
 def send_profile_digest(
     profile: ProfileConfig, jobs: list[JobListing], md_path: Path
 ) -> bool:

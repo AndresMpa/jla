@@ -194,6 +194,69 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
+class ResumeWorkExperienceConfig:
+    """One reverse-chronological entry. `end_date` empty/"" or "Present"
+    means current role. Dates and employer/title are rendered exactly as
+    given here — the CV-tailoring LLM step never touches them, only the
+    bullet phrasing (see cv.py)."""
+
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    bullets: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ResumeEducationConfig:
+    institution: str = ""
+    degree: str = ""
+    field_of_study: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    details: str = ""
+
+
+@dataclass(frozen=True)
+class ResumeProjectConfig:
+    """One entry under "Projects & Communities" - a side project, open-source
+    contribution, community/volunteer role, or similar."""
+
+    name: str = ""
+    description: str = ""
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class ResumeConfig:
+    """Structured ATS-resume data, used to render a CV tailored to a
+    specific job posting (see cv.py). Kept separate from the free-text
+    `profile` field on ProfileConfig, which is written for the job-matching
+    LLM prompt, not for a clean, parseable resume document.
+
+    Schema follows standard ATS-resume conventions: reverse-chronological
+    work experience with real dates (no tables/columns), a flat skills
+    list, standard section headers, single-column layout. Name/email/phone
+    are rendered as plain body text at the top of the document rather than
+    in a page header/footer, since many ATS parsers ignore header/footer
+    regions entirely.
+    """
+
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+    summary: str = ""
+    skills: list[str] = field(default_factory=list)
+    work_experience: list[ResumeWorkExperienceConfig] = field(default_factory=list)
+    education: list[ResumeEducationConfig] = field(default_factory=list)
+    # "Projects & Communities" section.
+    projects_and_communities: list[ResumeProjectConfig] = field(
+        default_factory=list
+    )
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     """Reserved for future work: sending each profile's digest via Telegram.
     Not used yet — just keeps the schema stable so profiles don't need to be
@@ -218,6 +281,7 @@ class ProfileConfig:
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
     output: ProfileOutputConfig = field(default_factory=ProfileOutputConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    resume: ResumeConfig = field(default_factory=ResumeConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -250,6 +314,30 @@ def _workday_section(raw: dict[str, Any]) -> WorkdayConfig:
     wd_raw = raw.get("workday") or {}
     companies = [WorkdayCompanyConfig(**c) for c in wd_raw.get("companies", [])]
     return WorkdayConfig(companies=companies)
+
+
+def _resume_section(raw: dict[str, Any]) -> ResumeConfig:
+    """Nested lists of dataclasses (work_experience, education,
+    projects_and_communities) need their own loader, same reason as
+    _greenhouse_section - _section() only handles flat dicts."""
+    r = raw.get("resume") or {}
+    return ResumeConfig(
+        name=r.get("name", ""),
+        email=r.get("email", ""),
+        phone=r.get("phone", ""),
+        summary=(r.get("summary", "") or "").strip(),
+        skills=list(r.get("skills", []) or []),
+        work_experience=[
+            ResumeWorkExperienceConfig(**w) for w in r.get("work_experience", []) or []
+        ],
+        education=[
+            ResumeEducationConfig(**e) for e in r.get("education", []) or []
+        ],
+        projects_and_communities=[
+            ResumeProjectConfig(**p)
+            for p in r.get("projects_and_communities", []) or []
+        ],
+    )
 
 
 def _env_bool(name: str) -> bool | None:
@@ -327,6 +415,7 @@ def profile_from_dict(name: str, raw: dict[str, Any]) -> ProfileConfig:
             chat_id=telegram_raw.get("chat_id"),
             enabled=bool(telegram_raw.get("enabled", False)),
         ),
+        resume=_resume_section(raw),
     )
 
 

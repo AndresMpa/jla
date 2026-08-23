@@ -36,7 +36,13 @@ from .config import (
     save_config,
     save_profile,
 )
-from .telegram import TelegramSendError, send_job_to_profile
+from .cv import ResumeIncomplete, build_tailored_cv, render_ats_pdf
+from .scoring import OllamaClient
+from .telegram import (
+    TelegramSendError,
+    send_document_to_profile,
+    send_job_to_profile,
+)
 
 CONFIG_PATH = Path("config.yaml")
 PROFILES_DIR = DEFAULT_PROFILES_DIR
@@ -104,12 +110,10 @@ def list_jobs(
     return records
 
 
-@app.post("/jobs/{job_id}/send-telegram")
-def send_job_telegram(job_id: int) -> dict[str, str]:
-    """Sends one job offer to Telegram — the only path used to deliver an
-    offer, so it always goes to the chat_id of the profile that owns the
-    job (JobRecord.profile), never a caller-supplied chat.
-    """
+def _load_job_and_profile(job_id: int):
+    """Shared lookup used by both /send-telegram and /send-cv: fetch the job
+    row and the profile that owns it (job.profile), raising the same
+    HTTPExceptions either endpoint would raise on a bad id."""
     cfg = load_config(CONFIG_PATH)
     if not cfg.database.url:
         raise HTTPException(500, "database.url is not configured")
@@ -126,9 +130,66 @@ def send_job_telegram(job_id: int) -> dict[str, str]:
     if not profile_path.exists():
         raise HTTPException(404, f"Profile '{job.profile}' not found")
     profile = load_profile(profile_path)
+    return cfg, job, profile
+
+
+@app.post("/jobs/{job_id}/send-telegram")
+def send_job_telegram(job_id: int) -> dict[str, str]:
+    """Sends one job offer to Telegram — the only path used to deliver an
+    offer, so it always goes to the chat_id of the profile that owns the
+    job (JobRecord.profile), never a caller-supplied chat.
+    """
+    _cfg, job, profile = _load_job_and_profile(job_id)
 
     try:
         send_job_to_profile(profile, job)
+    except TelegramSendError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return {"status": "sent", "profile": profile.name}
+
+
+@app.post("/jobs/{job_id}/send-cv")
+def send_cv_telegram(job_id: int) -> dict[str, str]:
+    """Generates a CV tailored to this specific job posting (via the same
+    Ollama model used for scoring - see cv.py) and sends it as a PDF to the
+    owning profile's Telegram chat. The tailoring never invents resume
+    facts: company/title/dates/degrees always come from the profile's
+    `resume:` section, the LLM only rewrites the summary, skill order, and
+    bullet phrasing (validated against the original data - see
+    cv.build_tailored_cv).
+
+    Synchronous like /send-telegram (no background task): a single Ollama
+    completion, not a full pipeline run, so the wait is comparable to one
+    job-scoring call, not a multi-minute scan.
+    """
+    cfg, job, profile = _load_job_and_profile(job_id)
+
+    if not profile.resume.name:
+        raise HTTPException(
+            400,
+            f"Profile '{profile.name}' has no resume data configured. "
+            "Add a `resume:` section to its profiles/<name>.yaml first.",
+        )
+
+    client = OllamaClient(cfg)
+    try:
+        tailored = build_tailored_cv(client, profile.resume, job)
+    except ResumeIncomplete as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    pdf_bytes = render_ats_pdf(profile.resume, tailored)
+    safe_name = (profile.resume.name or profile.name).replace(" ", "_")
+    safe_company = (job.company or "role").replace(" ", "_").replace("/", "-")
+    filename = f"{safe_name}_CV_{safe_company}.pdf"
+
+    try:
+        send_document_to_profile(
+            profile,
+            pdf_bytes,
+            filename,
+            caption=f"Tailored CV — {job.title} @ {job.company}",
+        )
     except TelegramSendError as exc:
         raise HTTPException(400, str(exc)) from exc
 

@@ -1,6 +1,9 @@
 requests>=2.31
 PyYAML>=6.0
 
+# ATS resume PDF rendering (see cv.py)
+fpdf2>=2.7.9
+
 # API + persistence
 fastapi>=0.115
 uvicorn[standard]>=0.30

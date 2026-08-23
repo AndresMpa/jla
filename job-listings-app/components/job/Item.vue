@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Send } from "lucide-vue-next";
+import { FileText, Send } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,30 @@ async function sendToTelegram() {
     sendErrorMessage.value =
       error?.data?.statusMessage ?? "Could not send this offer to Telegram";
     sendState.value = "error";
+  }
+}
+
+// "Send tailored CV": generates an ATS-formatted resume tailored to THIS
+// job posting (LLM rewrites summary/skill order/bullet phrasing only — it
+// never invents employers, dates, or degrees, see cv.py) and delivers it
+// as a PDF to the profile's Telegram chat. Can take a while (one LLM
+// completion), so this has its own independent loading state from the
+// "Send to Telegram" button above.
+const cvState = ref<"idle" | "sending" | "sent" | "error">("idle");
+const cvErrorMessage = ref("");
+
+async function sendTailoredCv() {
+  if (cvState.value === "sending") return;
+  cvState.value = "sending";
+  cvErrorMessage.value = "";
+  try {
+    await $fetch(`/api/jobs/${props.job.id}/send-cv`, { method: "POST" });
+    cvState.value = "sent";
+  } catch (err) {
+    const error = err as ApiFetchError;
+    cvErrorMessage.value =
+      error?.data?.statusMessage ?? "Could not generate or send the tailored CV";
+    cvState.value = "error";
   }
 }
 
@@ -141,6 +165,27 @@ const showOutreach = ref(false);
             </Button>
             <p v-if="sendState === 'error'" class="text-sm text-destructive">
               {{ sendErrorMessage }}
+            </p>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              class="rounded border-2 border-primary text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-60"
+              :disabled="cvState === 'sending' || cvState === 'sent'"
+              @click="sendTailoredCv"
+            >
+              <FileText class="h-4 w-4" />
+              {{
+                cvState === "sending"
+                  ? "Tailoring CV…"
+                  : cvState === "sent"
+                    ? "CV sent"
+                    : "Send tailored CV"
+              }}
+            </Button>
+            <p v-if="cvState === 'error'" class="text-sm text-destructive">
+              {{ cvErrorMessage }}
             </p>
           </div>
         </div>

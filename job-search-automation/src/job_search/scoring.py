@@ -117,6 +117,13 @@ class OllamaClient:
             print(f"  Ollama error: {exc}")
             return ""
 
+    def generate(self, prompt: str, num_predict: int = 500) -> str:
+        """Public entry point for callers outside this module (e.g. cv.py's
+        CV-tailoring step) that need a raw completion but aren't doing job
+        scoring/outreach. Empty string means the call failed or timed out -
+        callers must have a sensible fallback, same as score_job/draft_outreach."""
+        return self._generate(prompt, num_predict)
+
     def score_job(self, job: JobListing, profile_text: str) -> None:
         prompt = SCORE_PROMPT.format(
             profile=profile_text,
