@@ -255,7 +255,15 @@ def _cell(pdf: FPDF, h: float, text: str, **kwargs) -> None:
 
 
 def _multi_cell(pdf: FPDF, h: float, text: str) -> None:
-    pdf.multi_cell(0, h, _wrap_long_tokens(text))
+    # wrapmode="CHAR" is fpdf2's own built-in answer to this exact failure
+    # mode: if a "word" still doesn't fit the available width even after
+    # _wrap_long_tokens() (e.g. the model used a separator like "," or "/"
+    # instead of "-"/"_", which that preprocessing doesn't split on), this
+    # tells fpdf2 to break mid-character instead of raising
+    # FPDFException("Not enough horizontal space..."). Belt and suspenders
+    # with _wrap_long_tokens(), which keeps hyphenated phrases readable as
+    # separate words in the common case.
+    pdf.multi_cell(0, h, _wrap_long_tokens(text), wrapmode="CHAR")
 
 
 def _new_pdf() -> FPDF:
