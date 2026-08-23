@@ -85,11 +85,41 @@ class ProvidersConfig:
     # Off by default: ships with an empty companies list until real
     # tenant/site values are confirmed per company (see fetchers/workday.py).
     workday: bool = False
+    himalayas: bool = True
+    jobicy: bool = True
 
 
 @dataclass(frozen=True)
 class WeWorkRemotelyConfig:
     categories: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RemotiveConfig:
+    """Remotive categories to pull. Was hardcoded to 'software-dev' only -
+    now configurable so non-technical profiles (content, customer-support,
+    hr, writing...) can actually get matches. See
+    https://remotive.com/api/remote-jobs/categories for the full list."""
+
+    categories: list[str] = field(
+        default_factory=lambda: [
+            "software-dev",
+            "customer-support",
+            "writing",
+            "hr",
+            "all-others",
+        ]
+    )
+
+
+@dataclass(frozen=True)
+class JobicyConfig:
+    """Jobicy is a general (non-tech-only) remote job board. `industries`
+    maps to Jobicy's `industry` query param; leave empty to fetch every
+    industry. See https://jobicy.com/api/v2/remote-jobs for valid values."""
+
+    industries: list[str] = field(default_factory=list)
+    geo: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,6 +180,8 @@ class AppConfig:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     weworkremotely: WeWorkRemotelyConfig = field(default_factory=WeWorkRemotelyConfig)
+    remotive: RemotiveConfig = field(default_factory=RemotiveConfig)
+    jobicy: JobicyConfig = field(default_factory=JobicyConfig)
     greenhouse: GreenhouseConfig = field(default_factory=GreenhouseConfig)
     workday: WorkdayConfig = field(default_factory=WorkdayConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
@@ -254,6 +286,8 @@ def config_from_dict(raw: dict[str, Any]) -> AppConfig:
         ollama=ollama,
         providers=_section(raw, "providers", ProvidersConfig),
         weworkremotely=_section(raw, "weworkremotely", WeWorkRemotelyConfig),
+        remotive=_section(raw, "remotive", RemotiveConfig),
+        jobicy=_section(raw, "jobicy", JobicyConfig),
         greenhouse=_greenhouse_section(raw),
         workday=_workday_section(raw),
         scoring=_section(raw, "scoring", ScoringConfig),

@@ -14,6 +14,8 @@ from . import (
     arbeitnow,
     greenhouse,
     hackernews,
+    himalayas,
+    jobicy,
     python_jobs,
     remoteok,
     remotive,
@@ -33,6 +35,8 @@ REGISTRY = {
     "arbeitnow": arbeitnow.fetch,
     "greenhouse": greenhouse.fetch,
     "workday": workday.fetch,
+    "himalayas": himalayas.fetch,
+    "jobicy": jobicy.fetch,
 }
 
 
