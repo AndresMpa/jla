@@ -40,12 +40,17 @@ def fetch(cfg: AppConfig, prefilter: KeywordsConfig) -> list[JobListing]:
 
             for item in data.get("jobs", []):
                 title = item.get("title", "")
-                if not (is_senior(title, prefilter) or is_ai_related(title, prefilter)):
+                if not (
+                    is_senior(title, prefilter) or is_ai_related(title, prefilter)
+                ):
                     continue
 
                 locations = item.get("locationRestrictions") or []
                 location = (
-                    ", ".join(loc.get("name", "") for loc in locations)
+                    ", ".join(
+                        loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                        for loc in locations
+                    )
                     if locations
                     else "Worldwide"
                 )
