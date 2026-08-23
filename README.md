@@ -1,4 +1,4 @@
-# job-platform
+# JLA - Job Listing app
 
 Two projects, one system:
 
@@ -10,7 +10,7 @@ Two projects, one system:
   `config.yaml` from a `/settings` page.
 
 ```
-job-platform/
+jla/
 ├── docker-compose.yml
 ├── job-search-automation/   # backend: scraping, scoring, Postgres, API
 └── job-listings-app/        # frontend: Nuxt UI
