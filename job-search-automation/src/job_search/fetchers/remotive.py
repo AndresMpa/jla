@@ -37,9 +37,7 @@ def fetch(cfg: AppConfig, prefilter: KeywordsConfig) -> list[JobListing]:
                 if job_id is not None and job_id in seen_ids:
                     continue
                 title = item.get("title", "")
-                if not (
-                    is_senior(title, prefilter) or is_ai_related(title, prefilter)
-                ):
+                if not (is_senior(title, prefilter) or is_ai_related(title, prefilter)):
                     continue
                 if job_id is not None:
                     seen_ids.add(job_id)

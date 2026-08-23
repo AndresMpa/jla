@@ -217,6 +217,14 @@ def delete_profile(name: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _run_lock = asyncio.Lock()
+# Tracks pipeline progress independently of _run_lock: the lock is only
+# held once the background task actually starts executing (after the
+# HTTP response is sent), so checking _run_lock.locked() right after
+# POST /run returns is racy - a fast GET /run/status could see "not
+# running" before the task has even begun. This flag is set True before
+# scheduling the task and cleared when it finishes, so status is accurate
+# from the moment /run responds.
+_run_state = {"running": False}
 
 
 def _load_run_profiles(profile_names: list[str] | None):
@@ -240,9 +248,9 @@ def _run_and_persist(profiles) -> None:
 @app.post("/run")
 async def trigger_run(
     background_tasks: BackgroundTasks, profile: str | None = None
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Runs the pipeline for a single profile (?profile=name) or every profile."""
-    if _run_lock.locked():
+    if _run_lock.locked() or _run_state["running"]:
         raise HTTPException(409, "A run is already in progress")
 
     profile_names = [profile] if profile else None
@@ -253,7 +261,24 @@ async def trigger_run(
 
     async def _guarded_run() -> None:
         async with _run_lock:
-            await asyncio.to_thread(_run_and_persist, profiles)
+            try:
+                await asyncio.to_thread(_run_and_persist, profiles)
+            finally:
+                _run_state["running"] = False
 
+    _run_state["running"] = True
     background_tasks.add_task(_guarded_run)
-    return {"status": "started", "profiles": profile_names or "all"}
+    # `profiles` is always a list (FastAPI's automatic response model used
+    # to be inferred as dict[str, str] from this function's old return
+    # type, so returning a list here raised a ResponseValidationError and
+    # silently dropped the background task before it ever ran - the run
+    # never started even though the endpoint looked like it accepted it).
+    return {"status": "started", "profiles": profile_names or ["all"]}
+
+
+@app.get("/run/status")
+def run_status() -> dict[str, bool]:
+    """Lets the frontend poll while a background run is in flight, since
+    POST /run returns almost immediately (the pipeline itself keeps going
+    in the background and can take minutes)."""
+    return {"running": _run_state["running"]}
