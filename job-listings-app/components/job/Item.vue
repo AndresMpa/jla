@@ -54,7 +54,8 @@ async function sendTailoredCv() {
   } catch (err) {
     const error = err as ApiFetchError;
     cvErrorMessage.value =
-      error?.data?.statusMessage ?? "Could not generate or send the tailored CV";
+      error?.data?.statusMessage ??
+      "Could not generate or send the tailored CV";
     cvState.value = "error";
   }
 }

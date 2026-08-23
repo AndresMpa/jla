@@ -32,7 +32,7 @@ const clearTags = () => (selectedTags.value = []);
 
 <template>
   <div class="relative h-40">
-    <div v-if="profiles && profiles.length > 1" class="absolute right-4 top-4 z-10">
+    <div v-if="profiles && profiles.length > 1" class="absolute left-4 top-4 z-10">
       <label class="flex items-center gap-2 text-sm text-primary-foreground">
         Profile
         <select

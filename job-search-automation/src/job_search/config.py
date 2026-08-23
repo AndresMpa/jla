@@ -251,9 +251,7 @@ class ResumeConfig:
     work_experience: list[ResumeWorkExperienceConfig] = field(default_factory=list)
     education: list[ResumeEducationConfig] = field(default_factory=list)
     # "Projects & Communities" section.
-    projects_and_communities: list[ResumeProjectConfig] = field(
-        default_factory=list
-    )
+    projects_and_communities: list[ResumeProjectConfig] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -330,9 +328,7 @@ def _resume_section(raw: dict[str, Any]) -> ResumeConfig:
         work_experience=[
             ResumeWorkExperienceConfig(**w) for w in r.get("work_experience", []) or []
         ],
-        education=[
-            ResumeEducationConfig(**e) for e in r.get("education", []) or []
-        ],
+        education=[ResumeEducationConfig(**e) for e in r.get("education", []) or []],
         projects_and_communities=[
             ResumeProjectConfig(**p)
             for p in r.get("projects_and_communities", []) or []
