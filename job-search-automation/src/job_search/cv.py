@@ -215,6 +215,47 @@ def _degree_line(edu: ResumeEducationConfig) -> str:
 
 _MARGIN = 18
 _PAGE_WIDTH = 210  # A4 mm - ATS parsers don't care about paper size
+_MAX_UNBROKEN_WORD = 40  # chars; longer tokens get soft-broken so fpdf2 can wrap them
+
+
+def _wrap_long_tokens(text: str) -> str:
+    """fpdf2 only wraps at whitespace, so a single "word" wider than the
+    page's content width raises FPDFException("Not enough horizontal space
+    to render a single character") instead of wrapping. This happens in
+    practice with LLM-generated keyword-stuffed phrases like
+    "Instructional-Design-and-Curriculum-Development-for-Global-Audiences"
+    (hyphens/underscores standing in for spaces).
+
+    Break any token longer than _MAX_UNBROKEN_WORD at its hyphens/
+    underscores first (usually turns it back into normal separate words);
+    if it's still too long after that (e.g. a raw URL with no separators
+    at all), force-insert spaces every _MAX_UNBROKEN_WORD characters as a
+    last resort, so PDF rendering can never crash on this again regardless
+    of what text a model or a profile YAML happens to contain.
+    """
+
+    def _fix_token(match: re.Match) -> str:
+        token = match.group(0)
+        if len(token) <= _MAX_UNBROKEN_WORD:
+            return token
+        spaced = re.sub(r"[-_]", " ", token)
+        longest = max(spaced.split(), key=len, default="")
+        if len(longest) <= _MAX_UNBROKEN_WORD:
+            return spaced
+        return " ".join(
+            spaced[i : i + _MAX_UNBROKEN_WORD]
+            for i in range(0, len(spaced), _MAX_UNBROKEN_WORD)
+        )
+
+    return re.sub(r"\S+", _fix_token, text)
+
+
+def _cell(pdf: FPDF, h: float, text: str, **kwargs) -> None:
+    pdf.cell(0, h, _wrap_long_tokens(text), **kwargs)
+
+
+def _multi_cell(pdf: FPDF, h: float, text: str) -> None:
+    pdf.multi_cell(0, h, _wrap_long_tokens(text))
 
 
 def _new_pdf() -> FPDF:
@@ -229,7 +270,7 @@ def _section_header(pdf: FPDF, title: str) -> None:
     pdf.ln(3)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(20, 20, 20)
-    pdf.cell(0, 7, title.upper(), new_x="LMARGIN", new_y="NEXT")
+    _cell(pdf, 7, title.upper(), new_x="LMARGIN", new_y="NEXT")
     pdf.set_draw_color(60, 60, 60)
     y = pdf.get_y()
     pdf.line(_MARGIN, y, _PAGE_WIDTH - _MARGIN, y)
@@ -240,24 +281,24 @@ def render_ats_pdf(resume: ResumeConfig, tailored: TailoredCV) -> bytes:
     pdf = _new_pdf()
 
     pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 10, resume.name or "Candidate", new_x="LMARGIN", new_y="NEXT")
+    _cell(pdf, 10, resume.name or "Candidate", new_x="LMARGIN", new_y="NEXT")
 
     contact_bits = [b for b in (resume.email, resume.phone) if b]
     if contact_bits:
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(70, 70, 70)
-        pdf.cell(0, 6, " | ".join(contact_bits), new_x="LMARGIN", new_y="NEXT")
+        _cell(pdf, 6, " | ".join(contact_bits), new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(0, 0, 0)
 
     if tailored.summary:
         _section_header(pdf, "Summary")
         pdf.set_font("Helvetica", "", 10.5)
-        pdf.multi_cell(0, 5.5, tailored.summary)
+        _multi_cell(pdf, 5.5, tailored.summary)
 
     if tailored.skills_order:
         _section_header(pdf, "Skills")
         pdf.set_font("Helvetica", "", 10.5)
-        pdf.multi_cell(0, 5.5, " | ".join(tailored.skills_order))
+        _multi_cell(pdf, 5.5, " | ".join(tailored.skills_order))
 
     if resume.work_experience:
         _section_header(pdf, "Work Experience")
@@ -265,41 +306,39 @@ def render_ats_pdf(resume: ResumeConfig, tailored: TailoredCV) -> bytes:
             resume.work_experience, tailored.work_experience_bullets
         ):
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(
-                0, 6, f"{job.title} - {job.company}", new_x="LMARGIN", new_y="NEXT"
-            )
+            _cell(pdf, 6, f"{job.title} - {job.company}", new_x="LMARGIN", new_y="NEXT")
             meta = " | ".join(b for b in (job.location, _work_span(job)) if b)
             if meta:
                 pdf.set_font("Helvetica", "I", 9.5)
-                pdf.cell(0, 5, meta, new_x="LMARGIN", new_y="NEXT")
+                _cell(pdf, 5, meta, new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "", 10.5)
             for bullet in bullets:
-                pdf.multi_cell(0, 5.5, f"- {bullet}")
+                _multi_cell(pdf, 5.5, f"- {bullet}")
             pdf.ln(1)
 
     if resume.education:
         _section_header(pdf, "Education")
         for edu in resume.education:
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 6, _degree_line(edu), new_x="LMARGIN", new_y="NEXT")
+            _cell(pdf, 6, _degree_line(edu), new_x="LMARGIN", new_y="NEXT")
             meta = " | ".join(b for b in (edu.institution, _edu_span(edu)) if b)
             if meta:
                 pdf.set_font("Helvetica", "I", 9.5)
-                pdf.cell(0, 5, meta, new_x="LMARGIN", new_y="NEXT")
+                _cell(pdf, 5, meta, new_x="LMARGIN", new_y="NEXT")
             if edu.details:
                 pdf.set_font("Helvetica", "", 10.5)
-                pdf.multi_cell(0, 5.5, edu.details)
+                _multi_cell(pdf, 5.5, edu.details)
             pdf.ln(1)
 
     if resume.projects_and_communities:
         _section_header(pdf, "Projects & Communities")
         for p in resume.projects_and_communities:
             pdf.set_font("Helvetica", "B", 10.5)
-            pdf.cell(0, 5.5, p.name, new_x="LMARGIN", new_y="NEXT")
+            _cell(pdf, 5.5, p.name, new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "", 10.5)
             desc = p.description + (f" ({p.url})" if p.url else "")
             if desc.strip():
-                pdf.multi_cell(0, 5.5, desc)
+                _multi_cell(pdf, 5.5, desc)
             pdf.ln(1)
 
     return bytes(pdf.output())
