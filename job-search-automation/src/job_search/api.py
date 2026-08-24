@@ -237,7 +237,9 @@ def cv_status(job_id: int) -> dict[str, str]:
     endpoint used to return as HTTP error bodies."""
     state = _cv_jobs.get(job_id)
     if state is None:
-        raise HTTPException(404, "No CV generation in progress or completed for this job")
+        raise HTTPException(
+            404, "No CV generation in progress or completed for this job"
+        )
     return state
 
 

@@ -20,6 +20,7 @@ services:
       retries: 10
 
   backend:
+    userns_mode: "keep-id"
     build:
       context: ./job-search-automation
       dockerfile: Containerfile

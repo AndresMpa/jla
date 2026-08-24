@@ -84,9 +84,10 @@ function pollCvStatus(): Promise<{ ok: boolean; message?: string }> {
         return;
       }
       try {
-        const { status, detail } = await $fetch<{ status: string; detail: string }>(
-          `/api/jobs/${props.job.id}/cv-status`,
-        );
+        const { status, detail } = await $fetch<{
+          status: string;
+          detail: string;
+        }>(`/api/jobs/${props.job.id}/cv-status`);
         if (status === "done") {
           stopCvPoll();
           resolve({ ok: true });
@@ -114,13 +115,15 @@ async function sendTailoredCv() {
     if (result.ok) {
       cvState.value = "sent";
     } else {
-      cvErrorMessage.value = result.message ?? "Could not generate or send the tailored CV";
+      cvErrorMessage.value =
+        result.message ?? "Could not generate or send the tailored CV";
       cvState.value = "error";
     }
   } catch (err) {
     const error = err as ApiFetchError;
     cvErrorMessage.value =
-      error?.data?.statusMessage ?? "Could not generate or send the tailored CV";
+      error?.data?.statusMessage ??
+      "Could not generate or send the tailored CV";
     cvState.value = "error";
   }
 }

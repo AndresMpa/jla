@@ -56,13 +56,14 @@ export function useJobsFeed(profile: Ref<string> | ComputedRef<string>) {
       runPollTimer = setInterval(async () => {
         if (Date.now() - startedAt > RUN_POLL_MAX_MS) {
           stopRunPoll();
-          runError.value = "The search is taking too long — check the backend logs.";
+          runError.value =
+            "The search is taking too long — check the backend logs.";
           resolve();
           return;
         }
         try {
           const { running: stillRunning } = await $fetch<{ running: boolean }>(
-            "/api/run/status"
+            "/api/run/status",
           );
           if (!stillRunning) {
             stopRunPoll();
