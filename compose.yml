@@ -1,0 +1,74 @@
+services:
+  db:
+    image: docker.io/postgres:16-alpine
+    restart: unless-stopped
+    container_name: jla-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jobsearch}
+      POSTGRES_USER: ${POSTGRES_USER:-jobs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobspass}
+    volumes:
+      - job_platform_pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - jla-network
+
+  backend:
+    build:
+      context: ./job-search-automation
+      dockerfile: Containerfile
+    image: ${BACKEND_IMAGE:-jla-backend:latest}
+    restart: unless-stopped
+    container_name: jla-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BACKEND_PORT: ${BACKEND_PORT:-8000}
+      BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://jobs:jobspass@db:5432/jobsearch}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      OLLAMA_URL: ${OLLAMA_URL}
+      PYTHONPATH: /app/src
+    volumes:
+      - ./job-search-automation/config.yaml:/app/config.yaml:Z
+      - ./job-search-automation/profiles:/app/profiles:Z
+      - ./job-search-automation/output:/app/output:Z
+      - ./logs/backend:/app/logs:Z
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    command: ["uvicorn", "job_search.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - jla-network
+
+  frontend:
+    build:
+      context: ./job-listings-app
+      dockerfile: Containerfile
+    image: ${FRONTEND_IMAGE:-jla-frontend:latest}
+    restart: unless-stopped
+    container_name: jla-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NUXT_TELEMETRY_DISABLED: 1
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./logs/frontend:/app/logs:Z
+    networks:
+      - jla-network
+
+volumes:
+  job_platform_pgdata:
+    name: jla_postgres_data
+
+networks:
+  jla-network:
+    name: jla-network
+    driver: bridge

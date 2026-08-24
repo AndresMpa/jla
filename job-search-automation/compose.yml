@@ -1,0 +1,53 @@
+services:
+  db:
+    container_name: jla-db
+    image: docker.io/postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jobsearch}
+      POSTGRES_USER: ${POSTGRES_USER:-jobs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobspass}
+    volumes:
+      - job_search_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jobs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - jla-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.podman
+    image: jla-api:latest
+    restart: unless-stopped
+    container_name: jla-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://jobs:jobspass@db:5432/jobsearch}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.containers.internal:11434}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:Z
+      - ./profiles:/app/profiles:Z
+      - ./logs:/app/logs:Z
+    entrypoint: ["uvicorn", "job_search.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - jla-network
+
+volumes:
+  job_search_pgdata:
+    name: jla_postgres_data
+
+networks:
+  jla-network:
+    name: jla-network
+    driver: bridge
