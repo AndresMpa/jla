@@ -139,7 +139,15 @@ def build_tailored_cv(client: OllamaClient, resume: ResumeConfig, job) -> Tailor
         company=job.company,
         description=(job.description or "")[:3000],
     )
-    raw = client.generate(prompt, num_predict=1200)
+    # 600 tokens covers a tailored summary + a reordered skills list + a
+    # handful of bullets per job comfortably for a typical resume - this
+    # used to be 1200, which on CPU-bound Ollama can take several minutes
+    # of full-CPU generation (potentially the entire 300s ollama.timeout)
+    # for output that in practice never needs more than a few hundred
+    # tokens. Lower num_predict is the actual lever on wall-clock time
+    # here; the request/response mechanism (HTTP polling vs WebSockets)
+    # doesn't change how fast the model generates tokens.
+    raw = client.generate(prompt, num_predict=600)
     if not raw:
         return fallback
 
@@ -154,18 +162,14 @@ def build_tailored_cv(client: OllamaClient, resume: ResumeConfig, job) -> Tailor
     bullets = _validated_bullets(
         parsed.get("work_experience_bullets"), resume.work_experience
     )
-    return TailoredCV(
-        summary=summary, skills_order=skills_order, work_experience_bullets=bullets
-    )
+    return TailoredCV(summary=summary, skills_order=skills_order, work_experience_bullets=bullets)
 
 
 def _validated_skills_order(candidate: object, original: list[str]) -> list[str]:
     """Only accept the LLM's reordering if it's exactly the same set of
     skills (case-insensitive) - any addition, drop, or invented skill
     falls back to the original order instead."""
-    if not isinstance(candidate, list) or not all(
-        isinstance(s, str) for s in candidate
-    ):
+    if not isinstance(candidate, list) or not all(isinstance(s, str) for s in candidate):
         return list(original)
     if {s.strip().lower() for s in candidate} != {s.strip().lower() for s in original}:
         return list(original)
@@ -243,8 +247,7 @@ def _wrap_long_tokens(text: str) -> str:
         if len(longest) <= _MAX_UNBROKEN_WORD:
             return spaced
         return " ".join(
-            spaced[i : i + _MAX_UNBROKEN_WORD]
-            for i in range(0, len(spaced), _MAX_UNBROKEN_WORD)
+            spaced[i : i + _MAX_UNBROKEN_WORD] for i in range(0, len(spaced), _MAX_UNBROKEN_WORD)
         )
 
     return re.sub(r"\S+", _fix_token, text)
@@ -310,9 +313,7 @@ def render_ats_pdf(resume: ResumeConfig, tailored: TailoredCV) -> bytes:
 
     if resume.work_experience:
         _section_header(pdf, "Work Experience")
-        for job, bullets in zip(
-            resume.work_experience, tailored.work_experience_bullets
-        ):
+        for job, bullets in zip(resume.work_experience, tailored.work_experience_bullets):
             pdf.set_font("Helvetica", "B", 11)
             _cell(pdf, 6, f"{job.title} - {job.company}", new_x="LMARGIN", new_y="NEXT")
             meta = " | ".join(b for b in (job.location, _work_span(job)) if b)

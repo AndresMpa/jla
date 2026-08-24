@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FileText, Send } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,26 +49,58 @@ async function sendToTelegram() {
 const cvState = ref<"idle" | "sending" | "sent" | "error">("idle");
 const cvErrorMessage = ref("");
 
+const CV_POLL_INTERVAL_MS = 3000;
+// Matches the backend's own hard ceiling: one Ollama call capped at
+// ollama.timeout (300s in config.yaml) plus headroom for PDF render + the
+// Telegram upload. If it's still "running" past this, something's stuck
+// server-side - stop polling instead of doing it forever, which is what
+// made this feel like a hang in the first place.
+const CV_POLL_MAX_MS = 6 * 60 * 1000;
+
+let cvPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopCvPoll() {
+  if (cvPollTimer !== null) {
+    clearInterval(cvPollTimer);
+    cvPollTimer = null;
+  }
+}
+
+// Cleared on unmount so navigating away or the job list re-rendering this
+// card mid-poll can't leave an orphaned timer firing requests forever in
+// the background.
+onUnmounted(stopCvPoll);
+
 function pollCvStatus(): Promise<{ ok: boolean; message?: string }> {
   return new Promise((resolve) => {
-    const interval = setInterval(async () => {
+    const startedAt = Date.now();
+    cvPollTimer = setInterval(async () => {
+      if (Date.now() - startedAt > CV_POLL_MAX_MS) {
+        stopCvPoll();
+        resolve({
+          ok: false,
+          message: "This is taking too long — check the backend logs.",
+        });
+        return;
+      }
       try {
         const { status, detail } = await $fetch<{ status: string; detail: string }>(
           `/api/jobs/${props.job.id}/cv-status`,
         );
         if (status === "done") {
-          clearInterval(interval);
+          stopCvPoll();
           resolve({ ok: true });
         } else if (status === "error") {
-          clearInterval(interval);
+          stopCvPoll();
           resolve({ ok: false, message: detail });
         }
         // status === "running" - keep polling
       } catch {
         // Transient network hiccup while polling - keep trying rather than
-        // abandoning the poll and leaving the button stuck "sending".
+        // abandoning the poll and leaving the button stuck "sending"
+        // (the CV_POLL_MAX_MS ceiling above still bounds the total wait).
       }
-    }, 3000);
+    }, CV_POLL_INTERVAL_MS);
   });
 }
 

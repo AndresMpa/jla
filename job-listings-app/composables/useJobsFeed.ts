@@ -25,6 +25,26 @@ export function useJobsFeed(profile: Ref<string> | ComputedRef<string>) {
   const running = ref(false);
   const runError = ref("");
 
+  const RUN_POLL_INTERVAL_MS = 3000;
+  // A full scan (several job providers + an Ollama scoring pass per
+  // listing) can legitimately take a while, but it shouldn't take forever -
+  // this bounds it so a stuck backend run can't leave the UI polling (and
+  // "running") indefinitely.
+  const RUN_POLL_MAX_MS = 20 * 60 * 1000;
+
+  let runPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopRunPoll() {
+    if (runPollTimer !== null) {
+      clearInterval(runPollTimer);
+      runPollTimer = null;
+    }
+  }
+
+  // Cleared on unmount so navigating away mid-search can't leave an
+  // orphaned timer firing requests forever in the background.
+  onUnmounted(stopRunPoll);
+
   // POST /run only confirms the pipeline *started* - it runs in the
   // background on the server and can take minutes (several job providers
   // + an Ollama scoring pass per listing). Without this poll, `running`
@@ -32,20 +52,28 @@ export function useJobsFeed(profile: Ref<string> | ComputedRef<string>) {
   // re-enables and looks idle while the backend is still working.
   function pollUntilDone(): Promise<void> {
     return new Promise((resolve) => {
-      const interval = setInterval(async () => {
+      const startedAt = Date.now();
+      runPollTimer = setInterval(async () => {
+        if (Date.now() - startedAt > RUN_POLL_MAX_MS) {
+          stopRunPoll();
+          runError.value = "The search is taking too long — check the backend logs.";
+          resolve();
+          return;
+        }
         try {
           const { running: stillRunning } = await $fetch<{ running: boolean }>(
-            "/api/run/status",
+            "/api/run/status"
           );
           if (!stillRunning) {
-            clearInterval(interval);
+            stopRunPoll();
             resolve();
           }
         } catch {
           // Transient network hiccup while polling - keep trying rather
-          // than abandoning the poll and leaving the UI stuck "running".
+          // than abandoning the poll and leaving the UI stuck "running"
+          // (the RUN_POLL_MAX_MS ceiling above still bounds the total wait).
         }
-      }, 3000);
+      }, RUN_POLL_INTERVAL_MS);
     });
   }
 
