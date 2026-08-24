@@ -13,6 +13,11 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     networks:
       - jla-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jobs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
@@ -28,8 +33,8 @@ services:
       BACKEND_PORT: ${BACKEND_PORT:-8000}
       BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
       DATABASE_URL: ${DATABASE_URL:-postgresql://jobs:jobspass@db:5432/jobsearch}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama-service:11434}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      OLLAMA_URL: ${OLLAMA_URL}
       PYTHONPATH: /app/src
     volumes:
       - ./job-search-automation/config.yaml:/app/config.yaml:Z
@@ -41,6 +46,12 @@ services:
     command: ["uvicorn", "job_search.api:app", "--host", "0.0.0.0", "--port", "8000"]
     networks:
       - jla-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
   frontend:
     build:
@@ -53,6 +64,8 @@ services:
       backend:
         condition: service_healthy
     environment:
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://backend:8000}
+      NUXT_BACKEND_URL: ${NUXT_BACKEND_URL:-http://backend:8000}
       NUXT_TELEMETRY_DISABLED: 1
       NODE_ENV: production
       PORT: 3000
@@ -63,6 +76,12 @@ services:
       - ./logs/frontend:/app/logs:Z
     networks:
       - jla-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 volumes:
   job_platform_pgdata:
