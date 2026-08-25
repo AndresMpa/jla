@@ -24,74 +24,53 @@ export function useJobsFeed(profile: Ref<string> | ComputedRef<string>) {
 
   const running = ref(false);
   const runError = ref("");
+  // Latest step reported over WS /ws/run/status (e.g. "[alice] Scoring
+  // 3/12: Senior AI Engineer @ Acme") - the UI can show this next to the
+  // "Searching…" button instead of a plain spinner with no indication of
+  // what's actually happening.
+  const runProgress = ref("");
 
-  const RUN_POLL_INTERVAL_MS = 3000;
   // A full scan (several job providers + an Ollama scoring pass per
   // listing) can legitimately take a while, but it shouldn't take forever -
-  // this bounds it so a stuck backend run can't leave the UI polling (and
-  // "running") indefinitely.
-  const RUN_POLL_MAX_MS = 20 * 60 * 1000;
-
-  let runPollTimer: ReturnType<typeof setInterval> | null = null;
-
-  function stopRunPoll() {
-    if (runPollTimer !== null) {
-      clearInterval(runPollTimer);
-      runPollTimer = null;
-    }
-  }
-
-  // Cleared on unmount so navigating away mid-search can't leave an
-  // orphaned timer firing requests forever in the background.
-  onUnmounted(stopRunPoll);
-
-  // POST /run only confirms the pipeline *started* - it runs in the
-  // background on the server and can take minutes (several job providers
-  // + an Ollama scoring pass per listing). Without this poll, `running`
-  // would flip back to false right after the POST resolves, so the button
-  // re-enables and looks idle while the backend is still working.
-  function pollUntilDone(): Promise<void> {
-    return new Promise((resolve) => {
-      const startedAt = Date.now();
-      runPollTimer = setInterval(async () => {
-        if (Date.now() - startedAt > RUN_POLL_MAX_MS) {
-          stopRunPoll();
-          runError.value =
-            "The search is taking too long — check the backend logs.";
-          resolve();
-          return;
-        }
-        try {
-          const { running: stillRunning } = await $fetch<{ running: boolean }>(
-            "/api/run/status",
-          );
-          if (!stillRunning) {
-            stopRunPoll();
-            resolve();
-          }
-        } catch {
-          // Transient network hiccup while polling - keep trying rather
-          // than abandoning the poll and leaving the UI stuck "running"
-          // (the RUN_POLL_MAX_MS ceiling above still bounds the total wait).
-        }
-      }, RUN_POLL_INTERVAL_MS);
-    });
-  }
+  // this bounds it so a stuck backend run can't leave the UI "running"
+  // indefinitely if the socket never gets a terminal message.
+  const RUN_MAX_MS = 20 * 60 * 1000;
 
   async function startSearch() {
     running.value = true;
     runError.value = "";
+    runProgress.value = "";
     try {
       await $fetch("/api/run", {
         method: "POST",
         query: profile.value ? { profile: profile.value } : {},
       });
-      await pollUntilDone();
+      // POST /run only confirms the pipeline *started* - it runs in the
+      // background and can take minutes. WS /ws/run/status streams every
+      // step (fetching, per-profile scoring progress, report writes) and
+      // resolves once the backend publishes "done" or "error".
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("The search is taking too long — check the backend logs.")),
+          RUN_MAX_MS,
+        ),
+      );
+      const result = await Promise.race([
+        streamProgress("/ws/run/status", (message) => {
+          runProgress.value = message.detail;
+        }),
+        timeout,
+      ]);
+      if (result.status === "error") {
+        runError.value = result.detail || "The search failed. Please try again.";
+      }
       await refresh();
-    } catch {
-      runError.value = "Could not start the search. Please try again.";
+    } catch (err) {
+      runError.value =
+        err instanceof Error ? err.message : "Could not start the search. Please try again.";
     } finally {
       running.value = false;
+      runProgress.value = "";
     }
   }
 
@@ -105,6 +84,7 @@ export function useJobsFeed(profile: Ref<string> | ComputedRef<string>) {
     initDatabase,
     running,
     runError,
+    runProgress,
     startSearch,
   };
 }

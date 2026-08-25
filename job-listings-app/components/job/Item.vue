@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FileText, Send } from "lucide-vue-next";
-import { computed, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,88 +43,54 @@ async function sendToTelegram() {
 // The backend only kicks the work off and returns immediately — a full
 // tailoring pass (Ollama generation + PDF render + Telegram upload) can
 // take minutes, too long to hold open a single HTTP request reliably. So
-// this polls GET .../cv-status every few seconds until the backend
-// reports "done" or "error", the same pattern useJobsFeed uses for
-// POST /run + GET /run/status.
+// this streams WS /ws/jobs/{id}/cv-status, which pushes each step as it
+// happens (sending the prompt to Ollama, validating the response,
+// rendering the PDF, uploading to Telegram) until the backend publishes
+// "done" or "error" — same pattern useJobsFeed uses for POST /run.
 const cvState = ref<"idle" | "sending" | "sent" | "error">("idle");
 const cvErrorMessage = ref("");
+const cvProgress = ref("");
 
-const CV_POLL_INTERVAL_MS = 3000;
 // Matches the backend's own hard ceiling: one Ollama call capped at
 // ollama.timeout (300s in config.yaml) plus headroom for PDF render + the
 // Telegram upload. If it's still "running" past this, something's stuck
-// server-side - stop polling instead of doing it forever, which is what
-// made this feel like a hang in the first place.
-const CV_POLL_MAX_MS = 6 * 60 * 1000;
-
-let cvPollTimer: ReturnType<typeof setInterval> | null = null;
-
-function stopCvPoll() {
-  if (cvPollTimer !== null) {
-    clearInterval(cvPollTimer);
-    cvPollTimer = null;
-  }
-}
-
-// Cleared on unmount so navigating away or the job list re-rendering this
-// card mid-poll can't leave an orphaned timer firing requests forever in
-// the background.
-onUnmounted(stopCvPoll);
-
-function pollCvStatus(): Promise<{ ok: boolean; message?: string }> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    cvPollTimer = setInterval(async () => {
-      if (Date.now() - startedAt > CV_POLL_MAX_MS) {
-        stopCvPoll();
-        resolve({
-          ok: false,
-          message: "This is taking too long — check the backend logs.",
-        });
-        return;
-      }
-      try {
-        const { status, detail } = await $fetch<{
-          status: string;
-          detail: string;
-        }>(`/api/jobs/${props.job.id}/cv-status`);
-        if (status === "done") {
-          stopCvPoll();
-          resolve({ ok: true });
-        } else if (status === "error") {
-          stopCvPoll();
-          resolve({ ok: false, message: detail });
-        }
-        // status === "running" - keep polling
-      } catch {
-        // Transient network hiccup while polling - keep trying rather than
-        // abandoning the poll and leaving the button stuck "sending"
-        // (the CV_POLL_MAX_MS ceiling above still bounds the total wait).
-      }
-    }, CV_POLL_INTERVAL_MS);
-  });
-}
+// server-side.
+const CV_MAX_MS = 6 * 60 * 1000;
 
 async function sendTailoredCv() {
   if (cvState.value === "sending") return;
   cvState.value = "sending";
   cvErrorMessage.value = "";
+  cvProgress.value = "";
   try {
     await $fetch(`/api/jobs/${props.job.id}/send-cv`, { method: "POST" });
-    const result = await pollCvStatus();
-    if (result.ok) {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("This is taking too long — check the backend logs.")),
+        CV_MAX_MS,
+      ),
+    );
+    const result = await Promise.race([
+      streamProgress(`/ws/jobs/${props.job.id}/cv-status`, (message) => {
+        cvProgress.value = message.detail;
+      }),
+      timeout,
+    ]);
+    if (result.status === "done") {
       cvState.value = "sent";
     } else {
-      cvErrorMessage.value =
-        result.message ?? "Could not generate or send the tailored CV";
+      cvErrorMessage.value = result.detail || "Could not generate or send the tailored CV";
       cvState.value = "error";
     }
   } catch (err) {
     const error = err as ApiFetchError;
     cvErrorMessage.value =
-      error?.data?.statusMessage ??
-      "Could not generate or send the tailored CV";
+      err instanceof Error && !error?.data
+        ? err.message
+        : (error?.data?.statusMessage ?? "Could not generate or send the tailored CV");
     cvState.value = "error";
+  } finally {
+    cvProgress.value = "";
   }
 }
 
@@ -253,6 +219,9 @@ const showOutreach = ref(false);
                     : "Send tailored CV"
               }}
             </Button>
+            <p v-if="cvState === 'sending' && cvProgress" class="text-sm text-muted-foreground">
+              {{ cvProgress }}
+            </p>
             <p v-if="cvState === 'error'" class="text-sm text-destructive">
               {{ cvErrorMessage }}
             </p>

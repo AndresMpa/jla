@@ -27,8 +27,13 @@ from .fetchers import fetch_all
 from .filters import passes_filter
 from .models import JobListing
 from .reports import write_csv_report, write_markdown_report
-from .scoring import OllamaClient
+from .scoring import OllamaClient, ProgressFn
 from .telegram import send_profile_digest
+
+
+def _emit(on_progress: ProgressFn | None, message: str) -> None:
+    if on_progress is not None:
+        on_progress(message)
 
 
 def deduplicate(jobs: list[JobListing]) -> list[JobListing]:
@@ -57,12 +62,14 @@ def run_for_profile(
     profile: ProfileConfig,
     unique_jobs: list[JobListing],
     client: OllamaClient,
+    on_progress: ProgressFn | None = None,
 ) -> list[JobListing]:
     """Filter, score and rank the shared fetched listings for one profile."""
     filtered = [
         copy.deepcopy(j) for j in unique_jobs if passes_filter(j, profile.keywords)
     ]
     print(f"\n[{profile.name}] {len(filtered)} listings passed keyword filtering")
+    _emit(on_progress, f"[{profile.name}] {len(filtered)} listings passed keyword filtering")
     if not filtered:
         return []
 
@@ -73,6 +80,10 @@ def run_for_profile(
         print(
             f"[{profile.name}] [{i}/{len(filtered)}] {job.title[:40]} @ {job.company[:20]}"
         )
+        _emit(
+            on_progress,
+            f"[{profile.name}] Scoring {i}/{len(filtered)}: {job.title} @ {job.company}",
+        )
         client.score_job(job, profile.profile)
         if (job.score or 0) >= cfg.scoring.min_score_to_keep:
             client.draft_outreach(job, profile.profile)
@@ -80,30 +91,43 @@ def run_for_profile(
 
     kept = [j for j in filtered if (j.score or 0) >= cfg.scoring.min_score_to_keep]
     kept.sort(key=lambda j: j.income_score or 0, reverse=True)
+    _emit(on_progress, f"[{profile.name}] {len(kept)} listings kept after scoring")
     return kept
 
 
-def run(cfg: AppConfig, profiles: list[ProfileConfig]) -> dict[str, list[JobListing]]:
+def run(
+    cfg: AppConfig,
+    profiles: list[ProfileConfig],
+    on_progress: ProgressFn | None = None,
+) -> dict[str, list[JobListing]]:
     """Run the full pipeline for every given profile. Returns {profile_name: kept_jobs}."""
-    client = OllamaClient(cfg)
+    client = OllamaClient(cfg, on_progress=on_progress)
     print("Checking Ollama connection...")
+    _emit(on_progress, "Checking Ollama connection...")
     if not client.check_connection():
         sys.exit(1)
 
     print("\nFetching job listings...")
+    _emit(on_progress, "Fetching job listings from all providers...")
     prefilter = _merged_prefilter(profiles)
     all_jobs = fetch_all(cfg, prefilter)
     unique = deduplicate(all_jobs)
     print(f"\n{len(all_jobs)} listings fetched, {len(unique)} unique")
+    _emit(on_progress, f"{len(all_jobs)} listings fetched, {len(unique)} unique")
 
     results: dict[str, list[JobListing]] = {}
     for profile in profiles:
-        results[profile.name] = run_for_profile(cfg, profile, unique, client)
+        results[profile.name] = run_for_profile(
+            cfg, profile, unique, client, on_progress=on_progress
+        )
     return results
 
 
 def write_reports(
-    cfg: AppConfig, profile: ProfileConfig, kept: list[JobListing]
+    cfg: AppConfig,
+    profile: ProfileConfig,
+    kept: list[JobListing],
+    on_progress: ProgressFn | None = None,
 ) -> None:
     csv_path = profile.csv_path(cfg.output_base_dir)
     md_path = profile.md_path(cfg.output_base_dir)
@@ -112,7 +136,9 @@ def write_reports(
     print(
         f"\n[{profile.name}] {len(kept)} listings saved to:\n  - {csv_path}\n  - {md_path}"
     )
+    _emit(on_progress, f"[{profile.name}] Report saved ({len(kept)} listings)")
     send_profile_digest(profile, kept, md_path)
+    _emit(on_progress, f"[{profile.name}] Digest sent to Telegram")
 
 
 def main() -> None:

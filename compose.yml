@@ -20,7 +20,6 @@ services:
       retries: 10
 
   backend:
-    userns_mode: "keep-id"
     build:
       context: ./job-search-automation
       dockerfile: Containerfile
@@ -71,6 +70,16 @@ services:
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
+      # The browser needs to open the CV/run progress WebSockets against
+      # the backend directly (see composables/useProgressSocket.ts) -
+      # NUXT_BACKEND_URL above is server-only and may point at a
+      # docker-network-internal hostname the browser can't resolve.
+      # Leaving NUXT_PUBLIC_BACKEND_WS_BASE unset falls back to
+      # ws(s)://<page-host>:${BACKEND_PORT}, which matches this compose
+      # file's default of exposing the backend port on the host; set it
+      # explicitly if the backend is reachable at a different hostname.
+      NUXT_PUBLIC_BACKEND_WS_BASE: ${NUXT_PUBLIC_BACKEND_WS_BASE:-}
+      NUXT_PUBLIC_BACKEND_WS_PORT: ${BACKEND_PORT:-8000}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     volumes:

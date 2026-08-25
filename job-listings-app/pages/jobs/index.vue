@@ -17,6 +17,7 @@ const {
   initDatabase,
   running,
   runError,
+  runProgress,
   startSearch,
 } = useJobsFeed(selectedProfile);
 
@@ -65,6 +66,9 @@ const clearTags = () => (selectedTags.value = []);
       <Button size="lg" :disabled="running" @click="startSearch">
         {{ running ? "Searching…" : "Start to search" }}
       </Button>
+      <p v-if="running && runProgress" class="text-sm text-primary-foreground">
+        {{ runProgress }}
+      </p>
       <p v-if="runError" class="text-sm text-destructive">{{ runError }}</p>
     </div>
   </div>
