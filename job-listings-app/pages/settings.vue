@@ -30,6 +30,7 @@ const fromLines = (text: string) =>
 const form = reactive({
   ollamaUrl: "",
   ollamaModel: "",
+  ollamaCvModel: "",
   ollamaTimeout: 300,
   providers: {
     remoteok: true,
@@ -51,6 +52,7 @@ const form = reactive({
 function loadForm(s: AppSettings) {
   form.ollamaUrl = s.ollama.url;
   form.ollamaModel = s.ollama.model;
+  form.ollamaCvModel = s.ollama.cv_model;
   form.ollamaTimeout = s.ollama.timeout;
   form.providers = { ...s.providers };
   form.wwrCategories = toLines(s.weworkremotely.categories);
@@ -72,6 +74,7 @@ async function save() {
     ollama: {
       url: form.ollamaUrl,
       model: form.ollamaModel,
+      cv_model: form.ollamaCvModel,
       timeout: form.ollamaTimeout,
     },
     providers: { ...form.providers },
@@ -151,6 +154,10 @@ const providerLabels: Record<keyof AppSettings["providers"], string> = {
           <label class="flex flex-col gap-1 text-sm">
             Model
             <input v-model="form.ollamaModel" class="rounded bg-primary-foreground border border-gray-300 p-2" />
+          </label>
+          <label class="flex flex-col gap-1 text-sm">
+            CV model (empty = use Model above)
+            <input v-model="form.ollamaCvModel" class="rounded bg-primary-foreground border border-gray-300 p-2" />
           </label>
           <label class="flex flex-col gap-1 text-sm">
             Timeout (seconds)

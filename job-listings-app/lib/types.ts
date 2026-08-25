@@ -25,6 +25,7 @@ interface AppSettings {
   ollama: {
     url: string;
     model: string;
+    cv_model: string;
     timeout: number;
   };
   providers: {

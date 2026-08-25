@@ -96,15 +96,16 @@ class OllamaClient:
         print(f"Connected to Ollama, model '{self.cfg.ollama.model}' is available.")
         return True
 
-    def _generate(self, prompt: str, num_predict: int = 500) -> str:
+    def _generate(self, prompt: str, num_predict: int = 500, model: str | None = None) -> str:
+        model = model or self.cfg.ollama.model
         if not self.cfg.ollama.think:
             prompt += NO_THINK_SUFFIX
-        self._emit(f"Sending request to Ollama ({self.cfg.ollama.model})...")
+        self._emit(f"Sending request to Ollama ({model})...")
         try:
             resp = requests.post(
                 self.cfg.ollama.url,
                 json={
-                    "model": self.cfg.ollama.model,
+                    "model": model,
                     "prompt": prompt,
                     "stream": False,
                     "think": self.cfg.ollama.think,  # ignored by models that don't support it
@@ -133,12 +134,15 @@ class OllamaClient:
             self._emit(f"Ollama error: {exc}")
             return ""
 
-    def generate(self, prompt: str, num_predict: int = 500) -> str:
+    def generate(self, prompt: str, num_predict: int = 500, model: str | None = None) -> str:
         """Public entry point for callers outside this module (e.g. cv.py's
         CV-tailoring step) that need a raw completion but aren't doing job
-        scoring/outreach. Empty string means the call failed or timed out -
-        callers must have a sensible fallback, same as score_job/draft_outreach."""
-        return self._generate(prompt, num_predict)
+        scoring/outreach. `model` overrides `cfg.ollama.model` for this call
+        only - cv.py uses this to run tailoring on `cfg.ollama.cv_model`
+        when one is configured, independent of whatever model scoring uses.
+        Empty string means the call failed or timed out - callers must have
+        a sensible fallback, same as score_job/draft_outreach."""
+        return self._generate(prompt, num_predict, model=model)
 
     def score_job(self, job: JobListing, profile_text: str) -> None:
         self._emit(f"Scoring: {job.title} @ {job.company}")

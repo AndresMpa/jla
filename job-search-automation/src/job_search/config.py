@@ -40,6 +40,14 @@ def _detect_ollama_url() -> str:
 class OllamaConfig:
     url: str = field(default_factory=_detect_ollama_url)
     model: str = "qwen2.5:14b"
+    # Model used specifically for CV tailoring (cv.py's build_tailored_cv).
+    # Scoring/outreach (scoring.py's score_job/draft_outreach) run once per
+    # job listing, so `model` above should stay small/fast; CV tailoring
+    # runs once per *user click*, so it's worth spending a bigger, slower
+    # model on it for better rewrite quality. Empty string (the default)
+    # means "just use `model` for everything", so this is opt-in and
+    # existing single-model configs keep working unchanged.
+    cv_model: str = ""
     timeout: int = 300
     # Hybrid-reasoning models (Qwen3, DeepSeek-R1, ...) emit a long
     # <think>...</think> block before answering unless told not to. That's
@@ -356,6 +364,7 @@ def config_from_dict(raw: dict[str, Any]) -> AppConfig:
         or ollama_raw.get("url")
         or _detect_ollama_url(),
         model=os.environ.get("OLLAMA_MODEL") or ollama_raw.get("model", "qwen2.5:14b"),
+        cv_model=os.environ.get("OLLAMA_CV_MODEL") or ollama_raw.get("cv_model", ""),
         timeout=int(os.environ.get("OLLAMA_TIMEOUT") or ollama_raw.get("timeout", 300)),
         think=ollama_think
         if ollama_think is not None

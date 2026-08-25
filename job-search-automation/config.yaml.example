@@ -16,6 +16,13 @@ ollama:
   # Overridable at runtime with the OLLAMA_URL env var.
   url: null
   model: qwen2.5:14b
+  # Used only for CV tailoring (cv.py, one call per "Send tailored CV"
+  # click) - scoring/outreach (scoring.py, one call per job listing) always
+  # use `model` above. Leave empty/null to just use `model` for everything.
+  # Since tailoring runs on demand rather than once per job in a batch, a
+  # bigger/slower model here is usually worth it if you have one available.
+  # Overridable at runtime with the OLLAMA_CV_MODEL env var.
+  cv_model: null
   timeout: 300 # seconds
   # Hybrid-reasoning models (Qwen3, DeepSeek-R1, ...) emit a long <think>
   # block before answering unless told not to — usually just wasted time

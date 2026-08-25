@@ -175,7 +175,9 @@ def _build_tailored_cv(
     # tokens. Lower num_predict is the actual lever on wall-clock time
     # here; the request/response mechanism (HTTP polling vs WebSockets)
     # doesn't change how fast the model generates tokens.
-    raw = client.generate(prompt, num_predict=600)
+    raw = client.generate(
+        prompt, num_predict=600, model=client.cfg.ollama.cv_model or client.cfg.ollama.model
+    )
     if not raw:
         emit("No usable response from Ollama - using untailored resume")
         return fallback
