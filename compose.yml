@@ -39,7 +39,6 @@ services:
     volumes:
       - ./job-search-automation/config.yaml:/app/config.yaml:Z
       - ./job-search-automation/profiles:/app/profiles:Z
-      - ./job-search-automation/output:/app/output:Z
       - ./logs/backend:/app/logs:Z
     ports:
       - "${BACKEND_PORT:-8000}:8000"
